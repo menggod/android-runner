@@ -1,0 +1,41 @@
+name: Release
+
+# 打 v* 标签时自动打包 vsix 并发布到 GitHub Release
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: 校验 tag 与 package.json 版本一致
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          TAG="${GITHUB_REF_NAME#v}"
+          echo "package.json=$VERSION  tag=$TAG"
+          if [ "$VERSION" != "$TAG" ]; then
+            echo "::error::tag ($TAG) 与 package.json ($VERSION) 不一致，请先同步版本号"
+            exit 1
+          fi
+
+      - name: 运行回归检查
+        run: npm test --if-present
+
+      - name: 打包 vsix
+        run: npx --yes @vscode/vsce package --out "android-runner-${GITHUB_REF_NAME#v}.vsix"
+
+      - name: 创建 Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" ./*.vsix --generate-notes --title "$GITHUB_REF_NAME"

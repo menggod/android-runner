@@ -1,0 +1,8 @@
+build/**
+output/**
+.playwright-cli/**
+*.vsix
+build.sh
+test/**
+.github/**
+.gitignore

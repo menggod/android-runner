@@ -1,0 +1,6 @@
+node_modules/
+*.vsix
+build/
+output/
+.playwright-cli/
+.DS_Store

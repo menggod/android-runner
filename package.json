@@ -1,0 +1,179 @@
+{
+  "name": "android-runner",
+  "author": "menggod",
+  "displayName": "Android Runner",
+  "description": "在 VSCode 内一键检查设备、自动探测编译环境、编译、安装并启动 Android App，替代切到 Android Studio 点运行",
+  "version": "1.2.3",
+  "publisher": "notto-work",
+  "engines": {
+    "vscode": "^1.70.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onStartupFinished",
+    "onView:androidRunner.main"
+  ],
+  "main": "./extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "androidRunner.run",
+        "title": "Android: 运行到设备（编译 + 安装 + 启动）",
+        "icon": "$(play)"
+      },
+      {
+        "command": "androidRunner.selectDevice",
+        "title": "Android: 选择 / 刷新设备",
+        "icon": "$(device-mobile)"
+      },
+      {
+        "command": "androidRunner.doctor",
+        "title": "Android: 运行环境自检",
+        "icon": "$(checklist)"
+      },
+      {
+        "command": "androidRunner.buildOnly",
+        "title": "Android: 仅编译",
+        "icon": "$(tools)"
+      },
+      {
+        "command": "androidRunner.installOnly",
+        "title": "Android: 仅安装 APK",
+        "icon": "$(cloud-download)"
+      },
+      {
+        "command": "androidRunner.launchOnly",
+        "title": "Android: 仅启动 App",
+        "icon": "$(rocket)"
+      },
+      {
+        "command": "androidRunner.logcat",
+        "title": "Android: 查看设备日志 (logcat)",
+        "icon": "$(output)"
+      },
+      {
+        "command": "androidRunner.showOutput",
+        "title": "Android: 显示输出面板",
+        "icon": "$(terminal)"
+      },
+      {
+        "command": "androidRunner.cancel",
+        "title": "Android: 取消当前编译",
+        "icon": "$(debug-stop)"
+      },
+      {
+        "command": "androidRunner.showPanel",
+        "title": "Android: 打开侧边栏面板",
+        "icon": "$(window)"
+      },
+      {
+        "command": "androidRunner.refresh",
+        "title": "Android: 刷新设备与环境",
+        "icon": "$(refresh)"
+      }
+    ],
+    "configuration": {
+      "title": "Android Runner",
+      "properties": {
+        "androidRunner.module": {
+          "type": "string",
+          "default": "app",
+          "markdownDescription": "要构建的 Gradle 模块名。默认 `app`。"
+        },
+        "androidRunner.buildVariant": {
+          "type": "string",
+          "default": "debug",
+          "markdownDescription": "构建变体（`debug` / `release`）。影响默认 Gradle 任务与 APK 查找目录。"
+        },
+        "androidRunner.gradleTask": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "自定义 Gradle 任务。留空则自动为 `:<module>:assemble<Variant>`。"
+        },
+        "androidRunner.extraGradleArgs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "markdownDescription": "追加的 Gradle 参数，例如 `-Papi_env=prod`。"
+        },
+        "androidRunner.apkPath": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "APK 路径（相对工作区根目录）。留空则自动在 `build/outputs/apk/<variant>/` 下查找最新的 apk。"
+        },
+        "androidRunner.applicationId": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "应用包名。留空则自动从模块 `build.gradle` 的 `applicationId` 读取。"
+        },
+        "androidRunner.adbPath": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "adb 可执行文件路径。留空则按 `local.properties` → `ANDROID_HOME` → 常见 SDK 目录 → `PATH` 顺序自动探测。"
+        },
+        "androidRunner.javaHome": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Gradle 使用的 `JAVA_HOME`。留空则自动读取 `.idea/gradle.xml` 的 `gradleJvm` 并用 `java_home` 解析；再失败则沿用系统默认。"
+        },
+        "androidRunner.autoCreateLocalProperties": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "编译前若缺少 `local.properties`，自动写入探测到的 `sdk.dir`（该文件已在 .gitignore 中）。"
+        },
+        "androidRunner.pollIntervalMs": {
+          "type": "number",
+          "default": 10000,
+          "markdownDescription": "状态栏设备检测的轮询间隔（毫秒）。"
+        }
+      }
+    },
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "androidRunner",
+          "title": "Android Runner",
+          "icon": "media/icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "androidRunner": [
+        {
+          "type": "webview",
+          "id": "androidRunner.main",
+          "name": "运行",
+          "icon": "media/icon.svg"
+        }
+      ]
+    }
+  },
+  "scripts": {
+    "package": "vsce package",
+    "test": "node --test test/*.test.js"
+  },
+  "icon": "icon.png",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/menggod/android-runner.git"
+  },
+  "homepage": "https://github.com/menggod/android-runner#readme",
+  "bugs": {
+    "url": "https://github.com/menggod/android-runner/issues"
+  },
+  "keywords": [
+    "android",
+    "adb",
+    "gradle",
+    "apk",
+    "logcat",
+    "device",
+    "emulator",
+    "run"
+  ]
+}
