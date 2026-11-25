@@ -7,7 +7,7 @@ set -euo pipefail
 SRC="$(cd "$(dirname "$0")" && pwd)"
 OUT="$SRC/build"
 VERSION="$(node -p "require('$SRC/package.json').version")"
-VSIX="$SRC/android-runner-$VERSION.vsix"
+VSIX="$SRC/android-device-runner-$VERSION.vsix"
 
 rm -rf "$OUT"
 mkdir -p "$OUT/extension"
@@ -19,8 +19,8 @@ cat > "$OUT/extension.vsixmanifest" <<EOF
 <?xml version="1.0" encoding="utf-8"?>
 <PackageManifest Version="2.0.0" xmlns="http://schemas.microsoft.com/developer/vsx-schema/2011" xmlns:d="http://schemas.microsoft.com/developer/vsx-schema-design/2011">
   <Metadata>
-    <Identity Language="en-US" Id="android-runner" Version="$VERSION" Publisher="notto-work" />
-    <DisplayName>Android Runner</DisplayName>
+    <Identity Language="en-US" Id="android-device-runner" Version="$VERSION" Publisher="notto-work" />
+    <DisplayName>Android Device Runner</DisplayName>
     <Icon>extension/icon.png</Icon>
     <Description xml:space="preserve">在 VSCode 内一键检查设备、探测编译环境、编译、安装并启动 Android App</Description>
     <Tags>android,adb,gradle,device</Tags>

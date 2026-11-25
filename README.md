@@ -1,19 +1,19 @@
-# Android Runner
+# Android Device Runner
 
 在 VSCode 左侧边栏里替代「切到 Android Studio → 确认设备 → 点运行」这一整套动作：**一个面板看设备、编译、安装、启动、看日志**。
 
 不绑定任何具体项目：Gradle 工程根目录、adb、Android SDK、JDK、模块、包名、APK 路径都会自动探测，只有探测不到时才需要改设置项。
 
-- 扩展 ID：`notto-work.android-runner`
+- 扩展 ID：`notto-work.android-device-runner`
 - 最低 VSCode：1.70
 - 支持 macOS / Windows / Linux
 
 ## 安装
 
-拿到 `android-runner-<版本>.vsix` 后任选一种：
+拿到 `android-device-runner-<版本>.vsix` 后任选一种：
 
 ```bash
-code --install-extension android-runner-1.2.3.vsix
+code --install-extension android-device-runner-1.2.4.vsix
 ```
 
 或在 VSCode 里：`扩展` → 右上角 `...` → **从 VSIX 安装** → 选择文件 → 执行 `Developer: Reload Window`。
@@ -159,7 +159,7 @@ code --install-extension android-runner-1.2.3.vsix
 
 ```bash
 npm test                # 运行状态与宿主逻辑回归检查
-bash build.sh            # 只打包，输出 android-runner-<版本>.vsix
+bash build.sh            # 只打包，输出 android-device-runner-<版本>.vsix
 bash build.sh --install  # 打包并覆盖安装到本机 VSCode
 ```
 
