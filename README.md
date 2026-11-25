@@ -105,6 +105,7 @@ code --install-extension android-device-runner-1.2.4.vsix
 - `gradlew` 缺执行权限时自动 `chmod +x`；
 - 缺 `local.properties` 时按探测到的 SDK 自动生成（该文件通常已在 `.gitignore` 中）；
 - 编译时把 `JAVA_HOME` / `ANDROID_HOME` / `ANDROID_SERIAL` 注入 Gradle 进程，避免与 Android Studio 的环境不一致；
+- **Android 11+ 使用 `adb install --fastdeploy` 增量安装**，只传输 APK 中变化的块（170 MB 的包改几行代码后通常只传几 MB）；失败会自动回退到全量安装；
 - 安装遇到签名不一致 / 版本回退时，询问后可一键卸载重装。
 
 ## 设置项

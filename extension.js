@@ -1204,6 +1204,37 @@ async function build(device) {
 /* 安装 / 启动 / 日志                                                   */
 /* ------------------------------------------------------------------ */
 
+const apiLevelCache = new Map();
+
+/** 设备 SDK 级别；取不到时返回 0，按不支持增量安装处理。 */
+async function deviceApiLevel(serial) {
+  if (apiLevelCache.has(serial)) {
+    return apiLevelCache.get(serial);
+  }
+  const r = await execFileP(detectAdb(), ['-s', serial, 'shell', 'getprop', 'ro.build.version.sdk'], {
+    timeout: 5000
+  });
+  const level = parseInt((r.stdout || '').trim(), 10);
+  if (Number.isFinite(level) && level > 0) {
+    apiLevelCache.set(serial, level);
+    return level;
+  }
+  return 0;
+}
+
+/** 执行一次 adb install，附带耗时，便于对比增量安装效果。 */
+async function runInstall(adb, serial, apk, extraArgs) {
+  const args = ['-s', serial, 'install', '-r', '-t'].concat(extraArgs || []).concat([apk]);
+  output.appendLine(`▶ adb ${args.join(' ')}`);
+  const started = Date.now();
+  const r = await execFileP(adb, args, { timeout: 300000 });
+  const text = `${r.stdout || ''}${r.stderr || ''}`;
+  output.append(text.endsWith('\n') ? text : `${text}\n`);
+  const seconds = ((Date.now() - started) / 1000).toFixed(1);
+  output.appendLine(`  安装用时 ${seconds}s`);
+  return { ok: r.ok && /Success/i.test(text), text, seconds };
+}
+
 async function installApk(device) {
   const adb = detectAdb();
   const apk = resolveApk();
@@ -1215,35 +1246,44 @@ async function installApk(device) {
   const ageMin = Math.round((Date.now() - stat.mtimeMs) / 60000);
 
   output.appendLine('');
-  output.appendLine(`▶ adb -s ${device.serial} install -r -t ${apk}`);
   output.appendLine(
-    `  APK 构建于 ${new Date(stat.mtimeMs).toLocaleString()}（${ageMin} 分钟前），${(stat.size / 1024 / 1024).toFixed(1)} MB`
+    `导出 APK：${(stat.size / 1024 / 1024).toFixed(1)} MB，构建于 ${new Date(stat.mtimeMs).toLocaleString()}（${ageMin} 分钟前）`
   );
 
-  const r = await execFileP(adb, ['-s', device.serial, 'install', '-r', '-t', apk], { timeout: 300000 });
-  const text = `${r.stdout || ''}${r.stderr || ''}`;
-  output.append(text.endsWith('\n') ? text : `${text}\n`);
+  const api = await deviceApiLevel(device.serial);
+  let result;
 
-  if (r.ok && /Success/i.test(text)) {
+  if (api >= 30) {
+    // Android 11+ 支持增量安装：只传输 APK 中变化的块
+    result = await runInstall(adb, device.serial, apk, ['--fastdeploy']);
+    if (!result.ok) {
+      output.appendLine('  --fastdeploy 未成功（常见于签名变化或首次安装），回退到全量安装');
+      result = await runInstall(adb, device.serial, apk, []);
+    }
+  } else {
+    result = await runInstall(adb, device.serial, apk, []);
+  }
+
+  if (result.ok) {
     return true;
   }
-  if (/INSTALL_FAILED_UPDATE_INCOMPATIBLE|signatures do not match|INSTALL_FAILED_VERSION_DOWNGRADE/i.test(text)) {
+
+  if (/INSTALL_FAILED_UPDATE_INCOMPATIBLE|signatures do not match|INSTALL_FAILED_VERSION_DOWNGRADE/i.test(result.text)) {
     const pkg = resolvePackage();
     const choice = await vscode.window.showWarningMessage(
       '安装被拒绝（签名不一致或版本回退）。是否卸载后重装？设备上的应用数据会被清空。',
       '卸载并重装',
       '取消'
     );
-    if (choice === '卸载并重装' && pkg) {
-      output.appendLine(`▶ adb -s ${device.serial} uninstall ${pkg}`);
-      await execFileP(adb, ['-s', device.serial, 'uninstall', pkg], { timeout: 60000 });
-      const again = await execFileP(adb, ['-s', device.serial, 'install', '-r', '-t', apk], { timeout: 300000 });
-      const againText = `${again.stdout || ''}${again.stderr || ''}`;
-      output.append(againText.endsWith('\n') ? againText : `${againText}\n`);
-      return again.ok && /Success/i.test(againText);
+    if (choice !== '卸载并重装' || !pkg) {
+      return false;
     }
-    if (choice !== '卸载并重装') return { ok: false, cancelled: true };
+    output.appendLine(`▶ adb -s ${device.serial} uninstall ${pkg}`);
+    await execFileP(adb, ['-s', device.serial, 'uninstall', pkg], { timeout: 60000 });
+    const again = await runInstall(adb, device.serial, apk, []);
+    return again.ok;
   }
+
   vscode.window.showErrorMessage('安装失败，详情见输出面板。');
   return false;
 }
