@@ -3,7 +3,7 @@
   "author": "menggod",
   "displayName": "Android Device Runner",
   "description": "在 VSCode 内一键检查设备、自动探测编译环境、编译、安装并启动 Android App，替代切到 Android Studio 点运行",
-  "version": "1.2.5",
+  "version": "1.2.6",
   "publisher": "notto-work",
   "engines": {
     "vscode": "^1.70.0"
