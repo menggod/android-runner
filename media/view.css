@@ -162,16 +162,19 @@ body.vscode-high-contrast .action, body.vscode-high-contrast-light .action { bor
 /* Build configuration and actual operation stages. */
 .build-config { margin-top: 14px; }
 .config-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
-.config-fields label { font-size: 10px; color: var(--muted); min-width: 0; }
-.config-fields select {
+.config-fields label, .config-flavor { font-size: 10px; color: var(--muted); min-width: 0; }
+.config-fields select,
+.config-flavor input {
   display: block; width: 100%; margin-top: 5px; padding: 6px 7px;
   border: 1px solid var(--vscode-dropdown-border, var(--line)); border-radius: 5px;
   background: var(--vscode-dropdown-background, var(--surface));
   color: var(--vscode-dropdown-foreground, var(--foreground)); font: inherit; font-size: 11px;
   text-overflow: ellipsis; cursor: pointer;
 }
-select:disabled { opacity: .5; cursor: not-allowed; }
-select:focus-visible { outline: 1px solid var(--vscode-focusBorder, #007fd4); outline-offset: 2px; }
+.config-flavor { display: block; margin-top: 8px; }
+.config-flavor input { cursor: text; }
+select:disabled, input:disabled { opacity: .5; cursor: not-allowed; }
+select:focus-visible, input:focus-visible { outline: 1px solid var(--vscode-focusBorder, #007fd4); outline-offset: 2px; }
 .config-package, .config-task { margin-top: 7px; color: var(--muted); font: 10px/1.5 var(--vscode-editor-font-family, monospace); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; user-select: text; }
 .config-task { margin-top: 2px; opacity: .8; }
 .config-note { font-size: 10px; color: var(--warning); line-height: 1.7; margin-top: 7px; }

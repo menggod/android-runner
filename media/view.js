@@ -38,9 +38,14 @@
   });
 
   document.addEventListener('change', (event) => {
-    const field = event.target.id === 'moduleSelect' ? 'module' : event.target.id === 'variantSelect' ? 'buildVariant' : null;
+    const field = event.target.id === 'moduleSelect' ? 'module'
+      : event.target.id === 'variantSelect' ? 'buildVariant'
+      : event.target.id === 'flavorInput' ? 'flavor'
+      : null;
     if (!field || pendingAction || hostBusy()) return;
-    pendingConfiguration = { field, value: event.target.value };
+    const value = field === 'flavor' ? String(event.target.value || '').trim() : event.target.value;
+    if (field === 'flavor' && value === ((state.configuration || {}).flavor || '')) return;
+    pendingConfiguration = { field, value };
     pendingAction = 'setConfiguration';
     render();
     vscode.postMessage({ type: 'setConfiguration', ...pendingConfiguration });
@@ -74,6 +79,10 @@
   });
 
   document.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter' && event.target.id === 'flavorInput') {
+      event.target.blur();
+      return;
+    }
     if (event.key === 'Escape' && listOpen) {
       listOpen = false;
       persist();
@@ -189,6 +198,24 @@
     return { kind: 'idle', html: icon('clock') + '<div class="status-copy"><strong>等待运行</strong><span>' + (state.isProject ? '选择配置与设备，即可开始' : '打开 Android 工程即可开始') + '</span></div>' };
   }
 
+  function flavorNote(config) {
+    const flavors = config.flavors || [];
+    if (config.flavorMultiDimension) {
+      return '检测到多维度渠道，组合名无法静态推断，暂按 assembleDebug 构建（会编译全部组合）；可在「渠道」中指定一个渠道名。';
+    }
+    if (config.flavorAuto) {
+      return '检测到多个渠道，已默认使用「' + esc(config.resolvedFlavor) + '」；可在「渠道」中切换。';
+    }
+    if (config.flavorUnknown) {
+      return '未识别到 productFlavors，将按 assembleDebug 构建；若工程有多渠道，可手动填写渠道名。';
+    }
+    const chosen = (config.flavor || '').toLowerCase();
+    if (config.flavorSource === 'configured' && flavors.length && !flavors.some((name) => name.toLowerCase() === chosen)) {
+      return '已指定渠道「' + esc(config.flavor) + '」，但未在工程中识别到，请确认拼写。';
+    }
+    return '';
+  }
+
   function configurationHtml() {
     const config = state.configuration || { module: 'app', variant: 'debug', modules: ['app'], variants: ['debug', 'release'] };
     [['moduleSelect', config.modules, config.module, 'module'], ['variantSelect', config.variants, config.variant, 'buildVariant']].forEach(([id, options, selected, field]) => {
@@ -197,6 +224,18 @@
       $(id).value = pendingConfiguration && pendingConfiguration.field === field ? pendingConfiguration.value : selected;
       $(id).disabled = !state.isProject || hostBusy() || !!pendingAction || config.locked;
     });
+    // 渠道：datalist 下拉 + 自由输入，留空表示自动
+    const flavorInput = $('flavorInput');
+    if (document.activeElement !== flavorInput) {
+      const pending = pendingConfiguration && pendingConfiguration.field === 'flavor';
+      flavorInput.value = pending ? pendingConfiguration.value : (config.flavor || '');
+    }
+    flavorInput.placeholder = config.resolvedFlavor || '自动';
+    flavorInput.disabled = !state.isProject || hostBusy() || !!pendingAction || config.locked;
+    updateHtml('flavorOptions', (config.flavors || []).map((name) => '<option value="' + esc(name) + '"></option>').join(''));
+    const note = flavorNote(config);
+    $('flavorNote').hidden = !note;
+    updateHtml('flavorNote', note);
     $('packageLabel').textContent = state.packageName || '包名未识别';
     $('packageLabel').title = state.packageName || '可在扩展设置中指定 applicationId';
     $('taskLabel').textContent = (state.env || {}).task || '';

@@ -40,6 +40,7 @@ code --install-extension android-device-runner-<版本>.vsix
 │ │ 序列号        ● 应用运行中│ │
 │ └──────────────────────────┘ │
 │ 模块 [app ▾]  变体 [Debug ▾] │
+│ 渠道 [official ▾]            │
 │ work.notto.android           │
 │       ▶ 运行到设备           │
 │       编译 → 安装 → 启动      │
@@ -54,13 +55,13 @@ code --install-extension android-device-runner-<版本>.vsix
 │ app-debug.apk        17.5 MB │
 │ ▸ 构建环境            已识别 │
 │ ▸ 应用管理                   │
-│ menggod              v1.2.5 │
+│ menggod              v1.3.0 │
 └──────────────────────────────┘
 ```
 
 界面跟随 VS Code 主题，支持浅色、深色、高对比度主题和窄侧栏。活动栏使用「N + 运行箭头」单色图标，扩展主图标使用相同图形的品牌彩色版本。
 
-- 面板内直接选择应用模块与 Debug / Release，配置写入当前工作区文件夹。下方同步显示实际 Gradle 任务与包名；当前已有的自定义变体也会保留在下拉框中。
+- 面板内直接选择应用模块、渠道（`productFlavors`）与 Debug / Release，配置写入当前工作区文件夹。下方同步显示实际 Gradle 任务与包名；当前已有的自定义变体也会保留在下拉框中。
 - 模块从 settings.gradle(.kts) 与应用 build.gradle(.kts) 静态识别，支持常见嵌套模块和 projectDir 映射；通过自定义 Gradle 插件动态生成的模块，请在扩展设置中指定。
 - 若显式固定了 Gradle 任务、APK 路径或包名，面板会说明固定项并锁定配置切换，提供设置入口，避免选择与实际执行内容不一致。
 - 点击设备卡片选择设备；支持键盘 Tab / Enter 操作，Esc 收起列表。
@@ -92,6 +93,23 @@ code --install-extension android-device-runner-<版本>.vsix
 - 设备选择按工程根目录保存在 VS Code workspaceState，重载后继续使用；目标断开时不会自动切到另一台设备，重连后恢复选择。
 - 选中 AVD 会启动或复用同名模拟器，面板显示等待状态；同时校验 AVD 名称与 Android `sys.boot_completed=1` 后切换目标，不会误选等待期间新接入的 USB 设备。最多等待 180 秒，可在 VS Code 进度通知中取消等待。
 
+## 多渠道工程（productFlavors）
+
+原则是「总能跑起来」：识别有歧义时给一个可执行的默认值，而不是把操作禁掉。
+
+渠道取值优先级：
+
+1. 显式设置（`androidRunner.flavor` 或面板「渠道」输入框）；
+2. 多维度渠道（两个及以上 `flavorDimensions`）→ 组合名无法静态推断，按普通 `assembleDebug` 构建；
+3. 只识别到一个渠道 → 用它；
+4. 识别到 `official` → 用它，其次是 `dev`；
+5. 识别到多个渠道且都没有 `official` / `dev` → 自动取第一个，面板会提示已默认使用哪个。
+
+- **识别来源**：模块 `build.gradle(.kts)` 的 `productFlavors { ... }`（支持 `official { }` 与 `create("official")`），以及已构建过的 `build/outputs/apk/<flavor>/` 目录。循环生成的动态渠道在首次构建前无法静态列出，手填一次即可——选择按工程写入工作区设置。
+- **任务名**：`assemble<Flavor><Variant>`，如 `assembleOfficialDebug`、`assembleBaiduDebug`、`assemble_360Debug`（下划线保留，不做清洗）。
+- **APK 定位**：指定渠道后只在 `outputs/apk/<flavor>/<variant>/` 及其子目录里找，**不会**回退到无渠道的 `outputs/apk/debug`——那是旧包，装上会掩盖真实的定位失败。多维度构建时会接受任一以变体名结尾的产物（取最新），保证能装上一个包。
+- **卸载重装**：签名冲突时先用 `pm list packages` 核对设备上的实际包名，`applicationIdSuffix` 的渠道包会卸载正确的那个。
+
 ## 自动探测（正常情况下无需配置）
 
 | 项 | 探测顺序 |
@@ -100,9 +118,10 @@ code --install-extension android-device-runner-<版本>.vsix
 | adb | 设置项 → `local.properties` 的 `sdk.dir` → `ANDROID_HOME` / `ANDROID_SDK_ROOT` → `~/Library/Android/sdk` 等常见目录 → `PATH` |
 | Android SDK | `local.properties` → `ANDROID_HOME` → `ANDROID_SDK_ROOT` → 常见目录 |
 | JAVA_HOME | 设置项 → `.idea/gradle.xml` 的 `gradleJvm`（支持 Android Studio 自带 JBR）→ `JAVA_HOME` → `/usr/libexec/java_home` |
-| 包名 | 设置项 → 匹配当前变体的 APK `output-metadata.json` → `<module>/build.gradle(.kts)` 的 `applicationId` |
-| Gradle 任务 | 设置项 → `:<module>:assemble<Variant>` |
-| APK | 设置项 → 匹配变体的 `output-metadata.json`（优先无过滤的通用 APK）→ `<module>/build/outputs/apk/<variant>/` 下最新的 apk |
+| 包名 | 设置项 → 匹配当前渠道 + 变体的 APK `output-metadata.json` / `output.json` → `<module>/build.gradle(.kts)` 的 `applicationId` |
+| Gradle 渠道 | 设置项 → `productFlavors` 静态解析 → 已构建产物目录反推 → 都没有则不使用渠道 |
+| Gradle 任务 | 设置项 → `:<module>:assemble<Flavor><Variant>` |
+| APK | 设置项 → 匹配渠道 + 变体的 `output-metadata.json`（优先无过滤的通用 APK）→ `output.json`（AGP 3.x）→ `<module>/build/outputs/apk/<flavor>/<variant>/` 下最新的 apk |
 | 设备 | `adb devices -l`，解析状态、型号、Android 版本、真机/模拟器 |
 | 模拟器 | `<SDK>/emulator -list-avds` |
 
@@ -121,8 +140,9 @@ code --install-extension android-device-runner-<版本>.vsix
 | 设置 | 默认 | 说明 |
 |---|---|---|
 | `androidRunner.module` | `app` | 构建模块 |
+| `androidRunner.flavor` | 空 | 渠道名（`productFlavors`），留空自动判断 |
 | `androidRunner.buildVariant` | `debug` | `debug` / `release` |
-| `androidRunner.gradleTask` | 空 | 留空自动为 `:<module>:assemble<Variant>` |
+| `androidRunner.gradleTask` | 空 | 留空自动为 `:<module>:assemble<Flavor><Variant>` |
 | `androidRunner.extraGradleArgs` | `[]` | 追加参数，如 `["-Papi_env=prod"]` |
 | `androidRunner.apkPath` | 空 | 留空自动查找 |
 | `androidRunner.applicationId` | 空 | 留空自动读取 |

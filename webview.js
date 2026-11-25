@@ -110,6 +110,8 @@ class RunnerViewProvider {
         <label>模块<select id="moduleSelect" aria-label="构建模块" disabled><option>app</option></select></label>
         <label>变体<select id="variantSelect" aria-label="构建变体" disabled><option>Debug</option></select></label>
       </div>
+      <label class="config-flavor">渠道<input id="flavorInput" list="flavorOptions" placeholder="自动" autocomplete="off" spellcheck="false" aria-label="构建渠道（productFlavors）" disabled><datalist id="flavorOptions"></datalist></label>
+      <div id="flavorNote" class="config-note" hidden></div>
       <div id="packageLabel" class="config-package" title="当前应用包名">等待识别包名</div>
       <div id="taskLabel" class="config-task"></div>
       <div id="configNote" class="config-note" hidden></div>

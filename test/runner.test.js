@@ -8,7 +8,7 @@ const vm = require('node:vm');
 const { createRequire } = require('node:module');
 const { EventEmitter } = require('node:events');
 const { OperationTracker } = require('../operation');
-const { discoverModules, moduleDirectory, findApk, apkInfo } = require('../project-info');
+const { discoverModules, moduleDirectory, discoverFlavors, findApk, apkInfo } = require('../project-info');
 
 function fixture(t) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'android-runner-test-'));
@@ -59,6 +59,89 @@ test('flavored metadata and explicit APK paths resolve without mixing variants',
   assert.equal(findApk(f.root,'app','debug','custom.apk').path, path.join(f.root,'custom.apk'));
 });
 
+test('flavor discovery parses nested blocks and ignores DSL helpers and comments', (t) => {
+  const f = fixture(t);
+  f.write('app/build.gradle', [
+    'android {',
+    '  flavorDimensions "channel"',
+    '  productFlavors {',
+    '    official { dimension "channel"; applicationIdSuffix ".official" }',
+    '    baidu { dimension "channel" }',
+    '    create("_360") { dimension "channel" }',
+    '    configureEach { /* 不是渠道 */ }',
+    '  }',
+    '  // productFlavors { commented { } }',
+    '}'
+  ].join('\n'));
+  const result = discoverFlavors(f.root, 'app');
+  assert.deepEqual(result.flavors.slice().sort(), ['_360', 'baidu', 'official'].sort());
+  assert.equal(result.source, 'gradle');
+  assert.equal(result.dimensionCount, 1);
+  assert.equal(result.multiDimension, false);
+});
+
+test('flavor discovery falls back to built artifacts for dynamically generated flavors', (t) => {
+  const f = fixture(t);
+  f.write('app/build/outputs/apk/official/debug/app.apk', 'x');
+  f.write('app/build/outputs/apk/baidu/debug/app.apk', 'x');
+  const result = discoverFlavors(f.root, 'app');
+  assert.equal(result.source, 'artifacts');
+  assert.deepEqual(result.flavors.slice().sort(), ['baidu', 'official']);
+});
+
+test('declared flavors win over stale build artifacts', (t) => {
+  const f = fixture(t);
+  f.write('app/build.gradle', 'android { productFlavors { official { } } }');
+  f.write('app/build/outputs/apk/official/debug/app.apk', 'x');
+  f.write('app/build/outputs/apk/removed/debug/app.apk', 'x');
+  assert.deepEqual(discoverFlavors(f.root, 'app').flavors, ['official']);
+});
+
+test('flavored APK lookup never falls back to the unflavored debug output', (t) => {
+  const f = fixture(t);
+  metadata(f);
+  f.write('app/build/outputs/apk/official/debug/app.apk', 'official');
+  f.write('app/build/outputs/apk/official/debug/output-metadata.json', JSON.stringify({variantName:'officialDebug',applicationId:'work.notto.official',elements:[{outputFile:'app.apk',filters:[]}]}));
+  const found = findApk(f.root, 'app', 'debug', '', 'official');
+  assert.equal(found.applicationId, 'work.notto.official');
+  assert.ok(found.path.includes(path.join('official', 'debug')));
+  const missing = findApk(f.root, 'app', 'debug', '', 'nonexistent');
+  assert.equal(missing.path, '');
+  assert.equal(missing.flavorMissing, true);
+});
+
+test('AGP 3.x output.json resolves the APK when no metadata exists', (t) => {
+  const f = fixture(t);
+  f.write('app/build/outputs/apk/debug/app-debug.apk', 'legacy');
+  f.write('app/build/outputs/apk/debug/output.json', JSON.stringify([
+    {apkData:{fullName:'debug',baseName:'debug',outputFile:'app-debug.apk'},path:'app-debug.apk'}
+  ]));
+  assert.equal(findApk(f.root,'app','debug','').path, path.join(f.root,'app/build/outputs/apk/debug/app-debug.apk'));
+});
+
+test('flavor drives the exact AGP task and unresolved flavors still run', async (t) => {
+  const h = host(t);
+  h.config.flavor = 'official';
+  assert.equal(h.api.gradleTaskFor(), ':app:assembleOfficialDebug');
+  h.config.flavor = '_360';
+  assert.equal(h.api.gradleTaskFor(), ':app:assemble_360Debug');
+  h.config.flavor = '';
+  assert.equal(h.api.gradleTaskFor(), ':app:assembleDebug');
+
+  // 多渠道工程里含 official 时按优先级自动选中，不需要用户干预
+  h.write('app/build.gradle', 'plugins { id "com.android.application" }\nandroid { productFlavors { baidu { } official { } } }');
+  h.api.resetCache();
+  assert.equal(h.api.gradleTaskFor(), ':app:assembleOfficialDebug');
+
+  // 多个渠道且都没有 official/dev：自动取第一个，保证「默认能跑起来」
+  h.write('app/build.gradle', 'plugins { id "com.android.application" }\nandroid { productFlavors { baidu { } xiaoju { } } }');
+  h.api.resetCache();
+  assert.equal(h.api.gradleTaskFor(), ':app:assembleBaiduDebug');
+
+  h.config.flavor = 'xiaoju';
+  assert.equal(h.api.gradleTaskFor(), ':app:assembleXiaojuDebug');
+});
+
 test('pipeline records real stage boundaries and freezes finished durations', async () => {
   let now = 1000;
   const states = [];
@@ -86,7 +169,7 @@ test('failure stops later steps; cancellation stays distinct from failure', asyn
 function host(t, options = {}) {
   const f = fixture(t);
   metadata(f);
-  const config = {module:'app',buildVariant:'debug',javaHome:f.root,autoCreateLocalProperties:false,pollIntervalMs:60000};
+  const config = {module:'app',flavor:'',buildVariant:'debug',javaHome:f.root,autoCreateLocalProperties:false,pollIntervalMs:60000};
   const values = new Map();
   const calls = [];
   const messages = [];
@@ -159,6 +242,36 @@ test('host run emits build → install → launch and uses the variant metadata 
   assert(h.calls.some(c=>c.args.includes('install') && c.args.includes('-r')));
   assert(h.calls.some(c=>c.args.includes('start') && c.args.includes('work.notto.debug/.MainActivity')));
   assert(h.messages.some(s=>s.operation && s.operation.steps[1].status==='running'));
+});
+
+test('flavored run builds and installs only the selected flavor', async (t) => {
+  const h = host(t);
+  h.write('app/build.gradle', 'plugins { id "com.android.application" }\nandroid { defaultConfig { applicationId "work.notto.base" } productFlavors { official { } baidu { } } }');
+  h.write('app/build/outputs/apk/official/debug/app-official.apk', 'official-bytes');
+  h.write('app/build/outputs/apk/official/debug/output-metadata.json', JSON.stringify({variantName:'officialDebug',applicationId:'work.notto.base.official',elements:[{outputFile:'app-official.apk',filters:[]}]}));
+  h.api.resetCache();
+  await h.api.commandRun();
+  assert.equal(h.api.operations.state.status, 'success');
+  const gradle = h.calls.find((c) => c.file && c.file.endsWith('gradlew'));
+  assert.equal(gradle.args.join(' '), ':app:assembleOfficialDebug');
+  const install = h.calls.find((c) => c.args.includes('install'));
+  assert.ok(install.args.some((arg) => arg.includes('official')));
+  assert.equal(h.api.operations.state.packageName, 'work.notto.base.official');
+});
+
+test('multi-dimension flavors degrade to plain debug and still install a package', async (t) => {
+  const h = host(t);
+  h.write('app/build.gradle', 'android { flavorDimensions "color", "size"\n productFlavors { red { dimension "color" } blue { dimension "color" } big { dimension "size" } } }');
+  // 多维度产物是 outputs/apk/<f1>/<f2>/<variant>/
+  fs.rmSync(path.join(h.root, 'app/build/outputs/apk/debug'), {recursive:true, force:true});
+  h.write('app/build/outputs/apk/red/big/debug/app.apk', 'redbig');
+  h.write('app/build/outputs/apk/red/big/debug/output-metadata.json', JSON.stringify({variantName:'redBigDebug',applicationId:'work.notto.red',elements:[{outputFile:'app.apk',filters:[]}]}));
+  h.api.resetCache();
+  assert.equal(h.api.gradleTaskFor(), ':app:assembleDebug');
+  await h.api.commandRun();
+  assert.equal(h.api.operations.state.status, 'success');
+  const install = h.calls.find((c) => c.args.includes('install'));
+  assert.ok(install.args.some((arg) => arg.includes(path.join('red', 'big', 'debug'))));
 });
 
 test('installation and launch failures remain attributed to their own stages',async(t)=>{

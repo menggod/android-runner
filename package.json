@@ -3,7 +3,7 @@
   "author": "menggod",
   "displayName": "Android Device Runner",
   "description": "在 VSCode 内一键检查设备、自动探测编译环境、编译、安装并启动 Android App，替代切到 Android Studio 点运行",
-  "version": "1.2.6",
+  "version": "1.3.0",
   "publisher": "notto-work",
   "engines": {
     "vscode": "^1.70.0"
@@ -82,10 +82,15 @@
           "default": "app",
           "markdownDescription": "要构建的 Gradle 模块名。默认 `app`。"
         },
+        "androidRunner.flavor": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "多渠道工程的渠道（`productFlavors`）名，例如 `official`、`baidu`。留空时自动判断：只识别到一个渠道就用它，否则优先 `official`，其次 `dev`，再否则取第一个；多维度渠道（两个及以上 `flavorDimensions`）按普通 `assembleDebug` 构建。"
+        },
         "androidRunner.buildVariant": {
           "type": "string",
           "default": "debug",
-          "markdownDescription": "构建变体（`debug` / `release`）。影响默认 Gradle 任务与 APK 查找目录。"
+          "markdownDescription": "构建变体（`debug` / `release`）。与渠道组合为 `assemble<Flavor><Variant>`，例如 `assembleOfficialDebug`。"
         },
         "androidRunner.gradleTask": {
           "type": "string",

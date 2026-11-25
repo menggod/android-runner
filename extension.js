@@ -16,7 +16,7 @@ const os = require('os');
 const path = require('path');
 const { RunnerViewProvider } = require('./webview.js');
 const { OperationTracker } = require('./operation');
-const { discoverModules, moduleDirectory, findApk, apkInfo } = require('./project-info');
+const { discoverModules, moduleDirectory, discoverFlavors, findApk, apkInfo } = require('./project-info');
 
 const CFG = 'androidRunner';
 
@@ -59,7 +59,7 @@ let configuring = false;
 let buildCancelled = false;
 let avdStartup = null;
 const operations = new OperationTracker(publishRuntime);
-const configurationKeys = ['module', 'buildVariant', 'gradleTask', 'extraGradleArgs', 'apkPath', 'applicationId', 'adbPath', 'javaHome', 'autoCreateLocalProperties', 'pollIntervalMs'];
+const configurationKeys = ['module', 'flavor', 'buildVariant', 'gradleTask', 'extraGradleArgs', 'apkPath', 'applicationId', 'adbPath', 'javaHome', 'autoCreateLocalProperties', 'pollIntervalMs'];
 
 function configurationResource() {
   const folders = vscode.workspace.workspaceFolders || [];
@@ -69,7 +69,7 @@ function configurationResource() {
 }
 
 function configurationKey() {
-  return [projectRoot(), cfg().get('module') || 'app', cfg().get('buildVariant') || 'debug', cfg().get('gradleTask') || '', cfg().get('apkPath') || '', cfg().get('applicationId') || ''].join('|');
+  return [projectRoot(), cfg().get('module') || 'app', cfg().get('flavor') || '', cfg().get('buildVariant') || 'debug', cfg().get('gradleTask') || '', cfg().get('apkPath') || '', cfg().get('applicationId') || ''].join('|');
 }
 
 /** 极简运行环境可能没有 workspaceState，统一在这里兜底，避免各处重复判断。 */
@@ -144,22 +144,48 @@ async function updateBuildConfiguration(msg) {
   if (!projectRoot()) throw new Error('请先打开 Android 工程。');
   const info = buildConfiguration();
   if (info.locked) throw new Error('当前使用固定配置，请先在扩展设置中调整。');
-  const options = msg.field === 'module' ? info.modules : msg.field === 'buildVariant' ? info.variants : [];
-  if (typeof msg.value !== 'string' || !options.includes(msg.value)) throw new Error('无效的构建配置。');
+  let value = msg.value;
+  if (msg.field === 'flavor') {
+    // 渠道名允许自由输入（含留空＝自动），但不能带出 shell / Gradle 无法识别的字符
+    const text = typeof value === 'string' ? value.trim() : '';
+    if (text && !/^[\w.-]+$/.test(text)) throw new Error('渠道名只能包含字母、数字、下划线、点和短横线。');
+    value = text;
+  } else {
+    const options = msg.field === 'module' ? info.modules : msg.field === 'buildVariant' ? info.variants : [];
+    if (typeof msg.value !== 'string' || !options.includes(msg.value)) throw new Error('无效的构建配置。');
+  }
   configuring = true;
   try {
-    await cfg().update(msg.field, msg.value, vscode.ConfigurationTarget.WorkspaceFolder);
+    await cfg().update(msg.field, value, vscode.ConfigurationTarget.WorkspaceFolder);
     resetCache();
     await updateStatusBar();
-  } finally { configuring = false; }
+  } finally {
+    configuring = false;
+  }
 }
 
 function buildConfiguration() {
   const c = cfg();
   const module = (c.get('module') || 'app').trim().replace(/^:/, '');
   const variant = (c.get('buildVariant') || 'debug').trim();
+  const flavor = flavorState();
   const overrides = [['gradleTask', '任务'], ['apkPath', 'APK'], ['applicationId', '包名']].filter(([key]) => (c.get(key) || '').trim()).map(([, label]) => label);
-  return { module, variant, modules: discoverModules(projectRoot(), module), variants: Array.from(new Set(['debug', 'release', variant])), locked: overrides.length > 0, overrides, key: configurationKey() };
+  return {
+    module,
+    variant,
+    flavor: (c.get('flavor') || '').trim(),
+    flavors: flavor.flavors,
+    resolvedFlavor: flavor.name,
+    flavorSource: flavor.source,
+    flavorAuto: flavor.source === 'auto-first',
+    flavorMultiDimension: flavor.source === 'multi-dimension',
+    flavorUnknown: flavor.source === 'unknown',
+    modules: discoverModules(projectRoot(), module),
+    variants: Array.from(new Set(['debug', 'release', variant])),
+    locked: overrides.length > 0,
+    overrides,
+    key: configurationKey()
+  };
 }
 
 /* ------------------------------------------------------------------ */
@@ -856,7 +882,7 @@ function applyStatusBar(s) {
     `App：${s.packageName || '未知'} · ${s.current.appRunning ? '运行中' : '未运行'}`,
     `SDK：${s.env.sdk || '未探测到'}`,
     `JDK：${s.env.jdk || '未探测到'}`,
-    `任务：${s.env.task}`,
+    `任务：${s.env.task || '请先选择渠道'}`,
     '',
     '点击打开左侧面板'
   ].join('\n');
@@ -882,6 +908,7 @@ async function collectViewState() {
       sdk: detectSdkDir() || '',
       jdk: detectJavaHome() || '',
       gradle: gradleVersionFromWrapper() || '',
+      flavor: root ? flavorState().name : '',
       task: root ? gradleTaskFor() : '',
       apk: (root && resolveApk()) || ''
     },
@@ -985,6 +1012,38 @@ async function pickReadyDevice() {
 /* 工程信息探测：任务 / APK / 包名                                      */
 /* ------------------------------------------------------------------ */
 
+function cap(value) {
+  return value ? value.charAt(0).toUpperCase() + value.slice(1) : '';
+}
+
+/**
+ * 解析当前要用的渠道（productFlavors）。
+ *
+ * 优先级：显式设置 → 多维度降级（按普通 debug）→ 唯一渠道 → official → dev → 自动取第一个。
+ * 原则是「总能跑起来」：识别有歧义时挑一个可执行的默认值，而不是把操作禁掉。
+ */
+function flavorState() {
+  const root = projectRoot();
+  const module = (cfg().get('module') || 'app').trim().replace(/^:/, '');
+  const configured = (cfg().get('flavor') || '').trim();
+  const info = root ? discoverFlavors(root, module) : { flavors: [], source: 'none', dimensionCount: 0, multiDimension: false };
+  const result = (name, source) => Object.assign({}, info, { name, source });
+  if (configured) return result(configured, 'configured');
+  // 多维度渠道的组合名静态推不出来，直接按普通 debug 构建
+  if (info.multiDimension) return result('', 'multi-dimension');
+  if (info.flavors.length === 1) return result(info.flavors[0], 'single');
+  const official = info.flavors.find((item) => item.toLowerCase() === 'official');
+  if (official) return result(official, 'official');
+  const dev = info.flavors.find((item) => item.toLowerCase() === 'dev');
+  if (dev) return result(dev, 'dev');
+  if (info.flavors.length > 1) return result(info.flavors[0], 'auto-first');
+  return result('', 'unknown');
+}
+
+/**
+ * 任务名必须和 AGP 的变体命名一致：assemble + flavor 首字母大写 + variant 首字母大写。
+ * 渠道为空时就是 assemble<variant>（普通 debug）。
+ */
 function gradleTaskFor() {
   const c = cfg();
   const explicit = (c.get('gradleTask') || '').trim();
@@ -993,11 +1052,16 @@ function gradleTaskFor() {
   }
   const module = (c.get('module') || 'app').trim().replace(/^:/, '');
   const variant = (c.get('buildVariant') || 'debug').trim();
-  return `:${module}:assemble${variant.charAt(0).toUpperCase() + variant.slice(1)}`;
+  return `:${module}:assemble${cap(flavorState().name)}${cap(variant)}`;
 }
 
 function findApkForConfiguration() {
-  return findApk(projectRoot(), (cfg().get('module') || 'app').trim(), (cfg().get('buildVariant') || 'debug').trim(), (cfg().get('apkPath') || '').trim());
+  const c = cfg();
+  const module = (c.get('module') || 'app').trim();
+  const variant = (c.get('buildVariant') || 'debug').trim();
+  const flavor = flavorState();
+  const relaxed = flavor.source === 'multi-dimension';
+  return findApk(projectRoot(), module, variant, (c.get('apkPath') || '').trim(), flavor.name, relaxed);
 }
 
 function resolveApk() {
@@ -1155,6 +1219,14 @@ function killProcessTree(proc, sig) {
 }
 
 async function build(device) {
+  const flavor = flavorState();
+  if (flavor.source === 'multi-dimension') {
+    output.appendLine('');
+    output.appendLine('⚠️ 检测到多维度渠道，组合名无法静态推断，按 assembleDebug 构建（会编译全部组合）。可在 androidRunner.flavor 指定一个渠道。');
+  } else if (flavor.source === 'auto-first') {
+    output.appendLine('');
+    output.appendLine(`⚠️ 检测到多个渠道（${flavor.flavors.join(' / ')}），已默认使用「${flavor.name}」。可在面板「渠道」中切换。`);
+  }
   const task = gradleTaskFor();
   const extra = cfg().get('extraGradleArgs') || [];
   const args = [task].concat(extra);
@@ -1235,11 +1307,36 @@ async function runInstall(adb, serial, apk, extraArgs) {
   return { ok: r.ok && /Success/i.test(text), text, seconds };
 }
 
+/**
+ * 用设备上实际存在的包名。渠道包的 applicationId 常带 suffix，
+ * 与 build.gradle 里的声明不一致，直接卸载声明值会卸错包。
+ */
+async function devicePackageFor(adb, serial, declared) {
+  const r = await execFileP(adb, ['-s', serial, 'shell', 'pm', 'list', 'packages'], { timeout: 15000 });
+  const packages = (r.stdout || '')
+    .split(/\r?\n/)
+    .map((line) => line.replace(/^package:/, '').trim())
+    .filter(Boolean);
+  if (!packages.length) {
+    return declared;
+  }
+  if (packages.includes(declared)) {
+    return declared;
+  }
+  const suffixed = packages.filter((name) => name.startsWith(declared + '.'));
+  return suffixed.length === 1 ? suffixed[0] : declared;
+}
+
 async function installApk(device) {
   const adb = detectAdb();
   const apk = resolveApk();
   if (!apk || !fs.existsSync(apk)) {
-    vscode.window.showErrorMessage(`找不到 APK：${apk || '（未定位到输出目录）'}`);
+    const flavor = flavorState().name;
+    const detail = flavor
+      ? `渠道「${flavor}」的产物不存在，请先编译该渠道（任务 ${gradleTaskFor() || '未确定'}）。`
+      : '未定位到输出目录，请先编译。';
+    output.appendLine(`❌ 找不到 APK：${apk || detail}`);
+    vscode.window.showErrorMessage(`找不到 APK。${detail}`);
     return false;
   }
   const stat = fs.statSync(apk);
@@ -1269,7 +1366,8 @@ async function installApk(device) {
   }
 
   if (/INSTALL_FAILED_UPDATE_INCOMPATIBLE|signatures do not match|INSTALL_FAILED_VERSION_DOWNGRADE/i.test(result.text)) {
-    const pkg = resolvePackage();
+    const declared = resolvePackage();
+    const pkg = declared ? await devicePackageFor(adb, device.serial, declared) : '';
     const choice = await vscode.window.showWarningMessage(
       '安装被拒绝（签名不一致或版本回退）。是否卸载后重装？设备上的应用数据会被清空。',
       '卸载并重装',
@@ -1457,12 +1555,19 @@ async function commandDoctor() {
   const javaVer = javaVersionOf(javaDetail.home);
   const gradleVer = gradleVersionFromWrapper();
   const { devices, error } = await listDevices();
+  const flavor = flavorState();
+  const flavorText = flavor.source === 'multi-dimension'
+    ? `多维度（${flavor.flavors.join(' / ')}），按 assembleDebug 构建`
+    : flavor.flavors.length
+      ? `${flavor.name || '⚠️ 未选择'}（可选：${flavor.flavors.join(' / ')}）`
+      : '未识别（按普通 debug 构建）';
 
   const rows = [
     ['工程根目录', root || '❌ 未找到 gradlew（请在 Gradle 工程内打开）'],
     ['Gradle', gradlewPath() || '❌ 缺少 gradlew'],
     ['Gradle 版本', gradleVer || '未知'],
-    ['Gradle 任务', gradleTaskFor()],
+    ['渠道', flavorText],
+    ['Gradle 任务', gradleTaskFor() || '⚠️ 需先选择渠道'],
     ['Android SDK', sdk || '❌ 未探测到（检查 local.properties / ANDROID_HOME）'],
     ['adb', `${detectAdbUsable() ? adb : '❌ 未找到（检查 androidRunner.adbPath）'}${adbVer ? '  ' + adbVer : ''}`],
     ['JAVA_HOME', `${javaDetail.home || '❌ 未探测到'}（来源：${javaDetail.source}${javaVer ? '，' + javaVer : ''}）`]
