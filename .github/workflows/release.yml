@@ -33,7 +33,9 @@ jobs:
         run: npm test --if-present
 
       - name: 打包 vsix
-        run: npx --yes @vscode/vsce package --out "android-runner-${GITHUB_REF_NAME#v}.vsix"
+        run: |
+          NAME=$(node -p "require('./package.json').name")
+          npx --yes @vscode/vsce package --out "${NAME}-${GITHUB_REF_NAME#v}.vsix"
 
       - name: 创建 Release
         env:
