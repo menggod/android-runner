@@ -10,10 +10,16 @@
 
 ## 安装
 
-拿到 `android-device-runner-<版本>.vsix` 后任选一种：
+已发布到 VS Code Marketplace，在编辑器扩展面板搜 **Android Device Runner** 即可，或命令行：
 
 ```bash
-code --install-extension android-device-runner-1.2.4.vsix
+code --install-extension notto-work.android-device-runner
+```
+
+也可以从 [Releases](https://github.com/menggod/android-runner/releases) 下载 `.vsix` 离线安装：
+
+```bash
+code --install-extension android-device-runner-<版本>.vsix
 ```
 
 或在 VSCode 里：`扩展` → 右上角 `...` → **从 VSIX 安装** → 选择文件 → 执行 `Developer: Reload Window`。
@@ -48,7 +54,7 @@ code --install-extension android-device-runner-1.2.4.vsix
 │ app-debug.apk        17.5 MB │
 │ ▸ 构建环境            已识别 │
 │ ▸ 应用管理                   │
-│ menggod              v1.2.3 │
+│ menggod              v1.2.5 │
 └──────────────────────────────┘
 ```
 
