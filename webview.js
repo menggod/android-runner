@@ -132,6 +132,7 @@ class RunnerViewProvider {
         <button class="action secondary" id="installBtn" data-action="install" title="安装已有 APK，保留应用数据" disabled>${icon('download')}<span>安装 APK</span></button>
         <button class="action secondary" id="restartBtn" data-action="restart" title="停止后重新启动应用，不重新编译" disabled>${icon('refresh')}<span>重启应用</span></button>
         <button class="action secondary" id="logcatBtn" data-action="logcat" title="打开设备 logcat 日志" disabled>${icon('log')}<span>设备日志</span></button>
+        <button class="action secondary" id="mirrorBtn" data-action="mirror" title="在电脑上显示并操作手机（需要 scrcpy）" disabled>${icon('monitor')}<span>投屏</span></button>
         <button class="action secondary" id="stopBtn" data-action="stop" title="停止当前应用" disabled>${icon('stop')}<span>停止应用</span></button>
         <button class="action secondary" id="doctorBtn" data-action="doctor" title="检查 Android SDK、JDK 和设备环境">${icon('doctor')}<span>环境自检</span></button>
       </div>

@@ -11,9 +11,13 @@ VSIX="$SRC/android-device-runner-$VERSION.vsix"
 
 rm -rf "$OUT"
 mkdir -p "$OUT/extension"
-cp "$SRC/package.json" "$SRC/extension.js" "$SRC/webview.js" "$SRC/operation.js" "$SRC/project-info.js" "$SRC/README.md" "$SRC/LICENSE" "$SRC/icon.png" "$OUT/extension/"
+cp "$SRC/package.json" "$SRC/extension.js" "$SRC/webview.js" "$SRC/operation.js" "$SRC/project-info.js" "$SRC/mirror.js" "$SRC/README.md" "$SRC/LICENSE" "$SRC/icon.png" "$OUT/extension/"
 mkdir -p "$OUT/extension/media"
 cp "$SRC"/media/* "$OUT/extension/media/"
+mkdir -p "$OUT/extension/mirror"
+cp "$SRC"/mirror/*.js "$OUT/extension/mirror/" 2>/dev/null || true
+mkdir -p "$OUT/extension/bin"
+cp "$SRC"/bin/* "$OUT/extension/bin/" 2>/dev/null || true
 
 cat > "$OUT/extension.vsixmanifest" <<EOF
 <?xml version="1.0" encoding="utf-8"?>
@@ -22,8 +26,8 @@ cat > "$OUT/extension.vsixmanifest" <<EOF
     <Identity Language="en-US" Id="android-device-runner" Version="$VERSION" Publisher="notto-work" />
     <DisplayName>Android Device Runner</DisplayName>
     <Icon>extension/icon.png</Icon>
-    <Description xml:space="preserve">在 VSCode 内一键检查设备、探测编译环境、编译、安装并启动 Android App</Description>
-    <Tags>android,adb,gradle,device</Tags>
+    <Description xml:space="preserve">在 VSCode 内一键检查设备、探测编译环境、编译、安装、启动 Android App 并投屏操作</Description>
+    <Tags>android,adb,gradle,device,scrcpy,mirror</Tags>
     <Categories>Other</Categories>
     <GalleryFlags>Public</GalleryFlags>
     <Properties>

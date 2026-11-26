@@ -142,6 +142,27 @@ test('flavor drives the exact AGP task and unresolved flavors still run', async 
   assert.equal(h.api.gradleTaskFor(), ':app:assembleXiaojuDebug');
 });
 
+const { createMirror } = require('../mirror.js');
+
+test('scrcpy discovery prefers configured path, then PATH, then known install dirs', () => {
+  const make = (present, lookupResult) => createMirror({
+    exists: (target) => present.includes(target),
+    lookup: () => lookupResult,
+    spawn: () => ({})
+  });
+  assert.equal(make(['/custom/scrcpy'], '').findScrcpy('/custom/scrcpy'), '/custom/scrcpy');
+  assert.equal(make(['/custom/scrcpy'], '').findScrcpy('/missing/scrcpy'), '');
+  assert.equal(make(['/path/scrcpy'], '/path/scrcpy').findScrcpy(''), '/path/scrcpy');
+  assert.equal(createMirror({exists:()=>false, lookup:()=>'', spawn:()=>{}}).findScrcpy(''), '');
+});
+
+test('scrcpy arguments carry the device serial and user extras', () => {
+  const m = createMirror({exists:()=>false, lookup:()=>'', spawn:()=>{}});
+  assert.equal(m.buildArgs({serial:'S1', title:'Phone (S1)', extraArgs:['--stay-awake']}).join(' '), '-s S1 --window-title Phone (S1) --stay-awake');
+  assert.equal(m.buildArgs({}).length, 0);
+  assert.ok(m.installHint().length > 0);
+});
+
 test('pipeline records real stage boundaries and freezes finished durations', async () => {
   let now = 1000;
   const states = [];
@@ -169,7 +190,7 @@ test('failure stops later steps; cancellation stays distinct from failure', asyn
 function host(t, options = {}) {
   const f = fixture(t);
   metadata(f);
-  const config = {module:'app',flavor:'',buildVariant:'debug',javaHome:f.root,autoCreateLocalProperties:false,pollIntervalMs:60000};
+  const config = {module:'app',flavor:'',buildVariant:'debug',scrcpyPath:'',scrcpyArgs:['--stay-awake'],mirrorMode:options.mirrorMode||'window',javaHome:f.root,autoCreateLocalProperties:false,pollIntervalMs:60000};
   const values = new Map();
   const calls = [];
   const messages = [];
@@ -226,10 +247,30 @@ function host(t, options = {}) {
     }
   };
   const actualRequire = createRequire(path.join(__dirname,'../extension.js'));
-  const context = {require:(name)=>name==='vscode'?vscode:name==='child_process'?cp:name==='./webview.js'?{RunnerViewProvider:class{}}:actualRequire(name),module:{exports:{}},console,process:{...process,kill:()=>{}},Buffer,setTimeout,clearTimeout,setInterval,clearInterval,setImmediate,global:{}};
+  const { createMirror } = actualRequire('./mirror.js');
+  const mirrorStub = createMirror({
+    exists: (target) => !options.noScrcpy && !!target,
+    lookup: () => (options.noScrcpy ? '' : (options.scrcpyPath || '/usr/local/bin/scrcpy')),
+    spawn: (file, args, opts) => {
+      calls.push({file, args, opts});
+      const proc = new EventEmitter();
+      proc.kill = () => {};
+      return proc;
+    }
+  });
+  const mirrorRequire = (name) => {
+    if (name === './mirror.js') return mirrorStub;
+    if (name === './mirror/panel.js') return { MirrorPanel: class { dispose() {} } };
+    // 内嵌会话依赖真实设备，单测里固定失败，用来验证模式分发与回退
+    if (name === './mirror/scrcpy.js') {
+      return { ScrcpySession: class { async start() { throw new Error('session unavailable in tests'); } stop() {} } };
+    }
+    return actualRequire(name);
+  };
+  const context = {require:(name)=>name==='vscode'?vscode:name==='child_process'?cp:name==='./webview.js'?{RunnerViewProvider:class{}}:mirrorRequire(name),module:{exports:{}},console,process:{...process,kill:()=>{}},Buffer,setTimeout,clearTimeout,setInterval,clearInterval,setImmediate,global:{}};
   vm.createContext(context);
   const source=fs.readFileSync(path.join(__dirname,'../extension.js'),'utf8');
-  vm.runInContext(source+`\nextensionContext = __context; output = {append(){},appendLine(){},show(){}}; viewProvider = {postRuntime:(state)=>__messages.push(JSON.parse(JSON.stringify(state))),push(){}}; module.exports.test = {collectViewState,commandRun,commandBuildOnly,commandInstallOnly,commandCancel,handleViewAction,updateBuildConfiguration,chooseDevice,resolvePackage,gradleTaskFor,resetCache,configurationKey,operations};`,Object.assign(context,{__context:{workspaceState:{get:(key,fallback)=>values.get(key)||fallback,update:async(key,value)=>values.set(key,value)}},__messages:messages}));
+  vm.runInContext(source+`\nextensionContext = __context; output = {append(){},appendLine(){},show(){}}; viewProvider = {postRuntime:(state)=>__messages.push(JSON.parse(JSON.stringify(state))),push(){}}; module.exports.test = {collectViewState,commandRun,commandBuildOnly,commandInstallOnly,commandCancel,handleViewAction,updateBuildConfiguration,chooseDevice,resolvePackage,gradleTaskFor,resetCache,configurationKey,operations};`,Object.assign(context,{__context:{extensionUri:{fsPath:f.root},workspaceState:{get:(key,fallback)=>values.get(key)||fallback,update:async(key,value)=>values.set(key,value)}},__messages:messages}));
   const api=context.module.exports.test;
   return {...f,api,config,calls,messages,values,notifications,disconnect:()=>{connected=['USB-B'];},reconnect:()=>{connected=['USB-A'];},finishBuild:()=>buildProc.emit('close',0,null)};
 }
@@ -330,6 +371,37 @@ test('active runs freeze their configuration and reject concurrent actions; manu
   assert.equal(h.api.operations.state.status,'cancelled');
   assert.equal(h.api.gradleTaskFor(),':app:assembleRelease');
   assert(!h.calls.some(c=>c.args.includes('install')));
+});
+
+test('mirror launches scrcpy for the selected device and passes the adb path', async (t) => {
+  const h = host(t, {scrcpyPath:'/opt/bin/scrcpy'});
+  await h.api.handleViewAction('mirror');
+  const spawned = h.calls.find((c) => c.file === '/opt/bin/scrcpy');
+  assert.ok(spawned, 'scrcpy spawned');
+  assert.ok(spawned.args.includes('-s'));
+  assert.ok(spawned.args.includes('USB-A'));
+  assert.ok(spawned.args.includes('--stay-awake'));
+  assert.ok(spawned.opts.env.ADB, 'adb path injected via ADB env');
+});
+
+test('mirror explains how to install scrcpy when it is missing', async (t) => {
+  const h = host(t, {noScrcpy:true});
+  await h.api.handleViewAction('mirror');
+  assert.ok(h.notifications.some((n) => n && n.includes('未找到 scrcpy')));
+  assert(!h.calls.some((c) => c.file && c.file.includes('scrcpy')));
+});
+
+test('mirror mode dispatch honours panel/window/auto', async (t) => {
+  // 指定 panel 且启动失败：明确报错，不能悄悄换成窗口
+  const panel = host(t, {mirrorMode:'panel'});
+  await panel.api.handleViewAction('mirror');
+  assert.ok(panel.notifications.some((n) => n && n.includes('内嵌投屏不可用')));
+  assert(!panel.calls.some((c) => c.file && c.file.includes('scrcpy')));
+
+  // auto 且内嵌失败：回退到外部窗口
+  const auto = host(t, {mirrorMode:'auto', scrcpyPath:'/opt/bin/scrcpy'});
+  await auto.api.handleViewAction('mirror');
+  assert.ok(auto.calls.some((c) => c.file === '/opt/bin/scrcpy'));
 });
 
 test('AVD startup selects only the named emulator after boot completion, ignoring a new USB device',async(t)=>{

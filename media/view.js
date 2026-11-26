@@ -64,7 +64,7 @@
       $('deviceToggle').focus();
       return;
     }
-    if ((pendingAction || hostBusy()) && !['cancel', 'showOutput', 'settings', 'toggleList'].includes(action)) return;
+    if ((pendingAction || hostBusy()) && !['cancel', 'showOutput', 'settings', 'toggleList', 'mirror'].includes(action)) return;
     const message = { type: action };
     if (action === 'selectDevice') {
       message.serial = el.getAttribute('data-serial');
@@ -299,6 +299,7 @@
       stopBtn: !hasDevice || !hasPackage || busy,
       restartBtn: !hasDevice || !hasPackage || busy,
       logcatBtn: !hasDevice || busy,
+      mirrorBtn: !hasDevice,
       doctorBtn: busy,
       uninstallBtn: !hasDevice || !hasPackage || busy,
       clearDataBtn: !hasDevice || !hasPackage || busy,

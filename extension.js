@@ -17,6 +17,9 @@ const path = require('path');
 const { RunnerViewProvider } = require('./webview.js');
 const { OperationTracker } = require('./operation');
 const { discoverModules, moduleDirectory, discoverFlavors, findApk, apkInfo } = require('./project-info');
+const mirror = require('./mirror.js');
+const { ScrcpySession } = require('./mirror/scrcpy.js');
+const { MirrorPanel } = require('./mirror/panel.js');
 
 const CFG = 'androidRunner';
 
@@ -1459,6 +1462,138 @@ function openLogcat(device) {
 /* 命令                                                                */
 /* ------------------------------------------------------------------ */
 
+/* ------------------------------------------------------------------ */
+/* 投屏（scrcpy）                                                       */
+/* ------------------------------------------------------------------ */
+
+/** 每台设备一个投屏窗口/面板，避免重复点击开出多个。 */
+const mirrorProcs = new Map();
+const mirrorPanels = new Map();
+/** 正在启动中的设备，防止 await start() 期间并发点击开出两套会话。 */
+const mirrorPending = new Set();
+
+async function commandMirror() {
+  const device = await chooseDevice(false);
+  if (!device) {
+    return;
+  }
+  const mode = (cfg().get('mirrorMode') || 'window').trim();
+  if (mode !== 'window') {
+    const opened = await openMirrorPanel(device, mode === 'panel');
+    if (opened || mode === 'panel') {
+      return;
+    }
+  }
+  await launchScrcpyWindow(device);
+}
+
+/** 内嵌面板：只依赖 server jar，不需要本机安装 scrcpy。 */
+/** 独立命令：强制走内嵌面板，便于在不改默认设置的情况下验证。 */
+async function commandMirrorPanel() {
+  const device = await chooseDevice(false);
+  if (!device) {
+    return;
+  }
+  await openMirrorPanel(device, true);
+}
+
+async function openMirrorPanel(device, strict) {
+  const existing = mirrorPanels.get(device.serial);
+  if (existing) {
+    existing.panel.reveal(undefined, false);
+    return true;
+  }
+  if (mirrorPending.has(device.serial)) {
+    return true;
+  }
+  const extensionUri = extensionContext && extensionContext.extensionUri;
+  if (!extensionUri) {
+    output.appendLine('内嵌投屏不可用：扩展上下文缺失。');
+    return false;
+  }
+  mirrorPending.add(device.serial);
+  try {
+    const session = new ScrcpySession({
+      adb: detectAdb(),
+      serial: device.serial,
+      serverFile: path.join(extensionUri.fsPath, 'bin', 'scrcpy-server'),
+      log: (line) => output.appendLine(`[scrcpy] ${line}`)
+    });
+    try {
+      await session.start();
+    } catch (e) {
+      // start() 内部会回收已有资源，这里再兜一层，避免半途失败留下 forward 或设备端进程
+      try { session.stop(); } catch (_) { /* 已清理 */ }
+      const message = e && e.message ? e.message : String(e);
+      output.appendLine(`内嵌投屏启动失败：${message}`);
+      if (strict) {
+        vscode.window.showErrorMessage(`内嵌投屏不可用：${message}`);
+      }
+      return false;
+    }
+    const panel = new MirrorPanel({
+      session,
+      device,
+      extensionUri,
+      iconPath: vscode.Uri.joinPath(extensionUri, 'icon.png'),
+      log: (line) => output.appendLine(`[mirror] ${line}`),
+      onFallback: () => {
+        mirrorPanels.delete(device.serial);
+        vscode.window.showInformationMessage('内嵌解码不可用，已切换为 scrcpy 投屏窗口。');
+        launchScrcpyWindow(device);
+      }
+    });
+    mirrorPanels.set(device.serial, panel);
+    panel.panel.onDidDispose(() => mirrorPanels.delete(device.serial));
+    return true;
+  } finally {
+    mirrorPending.delete(device.serial);
+  }
+}
+
+async function launchScrcpyWindow(device) {
+  if (mirrorProcs.has(device.serial)) {
+    vscode.window.showInformationMessage(`${deviceLabel(device)} 的投屏窗口已经打开。`);
+    return;
+  }
+  const scrcpy = mirror.findScrcpy((cfg().get('scrcpyPath') || '').trim());
+  if (!scrcpy) {
+    const hint = mirror.installHint();
+    const choice = await vscode.window.showWarningMessage(`未找到 scrcpy，投屏需要先安装：${hint}`, '复制安装命令', '打开安装说明');
+    if (choice === '复制安装命令' && vscode.env && vscode.env.clipboard) {
+      await vscode.env.clipboard.writeText(hint);
+      vscode.window.showInformationMessage('安装命令已复制，粘贴到终端执行后重试。');
+    } else if (choice === '打开安装说明') {
+      vscode.env.openExternal(vscode.Uri.parse('https://github.com/Genymobile/scrcpy#get-the-app'));
+    }
+    return;
+  }
+  const args = mirror.buildArgs({
+    serial: device.serial,
+    title: `${device.model || device.serial} (${device.serial})`,
+    extraArgs: cfg().get('scrcpyArgs') || []
+  });
+  output.appendLine('');
+  output.appendLine(`▶ ${scrcpy} ${args.join(' ')}`);
+  let proc;
+  try {
+    proc = mirror.launch({ scrcpy, adb: detectAdb(), args });
+  } catch (e) {
+    vscode.window.showErrorMessage(`启动 scrcpy 失败：${e && e.message ? e.message : e}`);
+    return;
+  }
+  mirrorProcs.set(device.serial, proc);
+  proc.on('error', (e) => {
+    mirrorProcs.delete(device.serial);
+    output.appendLine(`投屏启动失败：${e && e.message ? e.message : e}`);
+    vscode.window.showErrorMessage('启动 scrcpy 失败，详情见输出面板。');
+  });
+  proc.on('exit', (code) => {
+    mirrorProcs.delete(device.serial);
+    output.appendLine(code ? `投屏进程退出（code=${code}）` : '投屏窗口已关闭。');
+  });
+}
+
 async function commandRun() {
   if (!projectRoot()) {
     vscode.window.showErrorMessage('当前工作区不是 Gradle 工程（未找到 gradlew）。');
@@ -1685,6 +1820,9 @@ async function handleViewAction(type, msg) {
     case 'logcat':
       await commandLogcat();
       break;
+    case 'mirror':
+      await commandMirror();
+      break;
     case 'doctor':
       await commandDoctor();
       break;
@@ -1857,6 +1995,8 @@ function activate(context) {
     vscode.commands.registerCommand('androidRunner.installOnly', wrap(commandInstallOnly)),
     vscode.commands.registerCommand('androidRunner.launchOnly', wrap(commandLaunchOnly)),
     vscode.commands.registerCommand('androidRunner.logcat', wrap(commandLogcat)),
+    vscode.commands.registerCommand('androidRunner.mirror', wrap(commandMirror)),
+    vscode.commands.registerCommand('androidRunner.mirrorPanel', wrap(commandMirrorPanel)),
     vscode.commands.registerCommand('androidRunner.showOutput', () => output.show(true)),
     vscode.commands.registerCommand('androidRunner.cancel', wrap(commandCancel)),
     vscode.commands.registerCommand('androidRunner.refresh', wrap(updateStatusBar)),
@@ -1930,6 +2070,22 @@ function deactivate() {
   if (currentProc) {
     killProcessTree(currentProc, 'SIGKILL');
   }
+  for (const proc of mirrorProcs.values()) {
+    try {
+      proc.kill();
+    } catch (e) {
+      /* 投屏窗口可能已被用户关闭 */
+    }
+  }
+  mirrorProcs.clear();
+  for (const panel of mirrorPanels.values()) {
+    try {
+      panel.dispose();
+    } catch (e) {
+      /* 面板可能已被用户关闭 */
+    }
+  }
+  mirrorPanels.clear();
 }
 
 module.exports = { activate, deactivate };

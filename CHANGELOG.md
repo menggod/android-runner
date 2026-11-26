@@ -1,5 +1,22 @@
 # Changelog
 
+## 1.5.0
+
+- 新增内嵌投屏（实验）：画面显示在 VSCode 面板里，用鼠标键盘操作（点击、滑动、滚轮、常用按键）。默认不启用，通过命令「Android: 投屏（内嵌面板 · 实验）」触发
+- 扩展自带 scrcpy server（`bin/scrcpy-server`），目标是让内嵌投屏不依赖本机安装 scrcpy
+- 新增设置 `androidRunner.mirrorMode`：默认 `window`（外部 scrcpy 窗口）；`panel` 为内嵌实验路径；`auto` 优先内嵌、失败回退
+- 内嵌模式用 WebCodecs 硬解 H.264 Annex-B，解码器参数从码流 SPS 推导，不硬编码 profile/level
+- 画面隐藏时自动暂停解码，恢复时重新要关键帧，避免后台空转
+- 随包附上 scrcpy 的 Apache 2.0 许可声明（`bin/scrcpy-server.LICENSE`）
+
+## 1.4.0
+
+- 新增投屏：面板「投屏」按钮与命令「Android: 投屏到电脑」，基于 scrcpy 在电脑上显示并操作手机（点击、滑动、输入、音量、旋转）
+- 自动探测 scrcpy（设置项 → `PATH` → Homebrew / 常见安装目录），未安装时提示安装命令并支持一键复制
+- 把探测到的 adb 路径通过 `ADB` 环境变量传给 scrcpy，SDK 不在默认位置也能用
+- 每台设备只保留一个投屏窗口，关闭窗口即释放；扩展停用时回收残留进程
+- 新增设置 `androidRunner.scrcpyPath`、`androidRunner.scrcpyArgs`
+
 ## 1.3.0
 
 - 支持多渠道工程（`productFlavors`）：新增 `androidRunner.flavor` 设置与面板「渠道」输入框（下拉候选 + 自由输入，留空自动）
