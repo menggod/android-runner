@@ -78,6 +78,7 @@ code --install-extension android-device-runner-<版本>.vsix
 | 停止 | `am force-stop` 当前应用 |
 | 重启 | 先停应用再冷启动，不重新编译 |
 | 编译 | 只跑 Gradle 任务，不需要连接设备 |
+| 清理重建 | 先清掉构建缓存残留再编译，修 `defined multiple times` 这类增量缓存问题 |
 | 日志 | 新开终端跑 logcat（默认只过滤本应用进程） |
 | 投屏 | 用 scrcpy 打开手机实时画面窗口，可用鼠标键盘操作（需先安装 scrcpy） |
 | 安装 | 用已有 APK 重装，不重新编译 |
@@ -177,6 +178,7 @@ code --install-extension android-device-runner-<版本>.vsix
 | `androidRunner.buildVariant` | `debug` | `debug` / `release` |
 | `androidRunner.gradleTask` | 空 | 留空自动为 `:<module>:assemble<Flavor><Variant>` |
 | `androidRunner.extraGradleArgs` | `[]` | 追加参数，如 `["-Papi_env=prod"]` |
+| `androidRunner.cleanScope` | `stale` | 清理范围：`stale`（transforms/dex 缓存）/ `intermediates` / `gradle`（`gradlew clean`） |
 | `androidRunner.apkPath` | 空 | 留空自动查找 |
 | `androidRunner.applicationId` | 空 | 留空自动读取 |
 | `androidRunner.adbPath` | 空 | 留空自动探测 |
@@ -189,7 +191,7 @@ code --install-extension android-device-runner-<版本>.vsix
 
 ## 命令面板
 
-面板按钮都有对应的命令，需要时可在命令面板执行：`Android: 运行到设备`、`Android: 仅编译`、`Android: 运行环境自检` 等。投屏另有 `Android: 投屏到电脑 (scrcpy)`（外部窗口）与 `Android: 投屏（内嵌面板 · 实验）`。**没有绑定任何快捷键。**
+面板按钮都有对应的命令，需要时可在命令面板执行：`Android: 运行到设备`、`Android: 仅编译`、`Android: 清理缓存并重新编译`、`Android: 运行环境自检` 等。投屏另有 `Android: 投屏到电脑 (scrcpy)`（外部窗口）与 `Android: 投屏（内嵌面板 · 实验）`。**没有绑定任何快捷键。**
 
 ## 隐私与权限
 
@@ -215,6 +217,7 @@ code --install-extension android-device-runner-<版本>.vsix
 
 - **面板显示「未连接设备」**：会区分「未检测到设备」「未授权（请在手机上点允许 USB 调试）」「offline（拔插 USB 或 `adb kill-server`）」。
 - **编译失败**：输出面板「Android Runner」有完整 Gradle 日志，报错行可直接点击跳转。
+- **报 `Type xxx is defined multiple times` / `Duplicate class`**：不是依赖写错，通常是增量构建缓存残留——AGP 的 Transform 输出目录只追加不清理，依赖版本变化后同一个类的两份历史产物会一起进入 dex 合并。点「清理重建」即可（默认只清 `transforms`/`dex` 这些缓存，比全量 clean 快得多）。插件识别到这类报错时会直接在失败提示里给出「清理缓存并重试」。
 - **和 Android Studio 同时构建**：两边共用 `~/.gradle` 的 daemon，通常没问题；卡住时点「取消编译」。
 - **改完代码没有生效**：确认设备区是目标设备；安装日志会打印所用 APK 的构建时间与大小。
 

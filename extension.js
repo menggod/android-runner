@@ -1118,6 +1118,148 @@ function resolvePackage() {
 /* 编译                                                                */
 /* ------------------------------------------------------------------ */
 
+/**
+ * 增量构建缓存残留导致的经典失败：AGP 的 Transform 输出目录只追加不清理，
+ * 依赖版本变化后旧产物（如两个版本的同一个库）会一起进入 dex 输入，
+ * D8 报 "Type xxx is defined multiple times"。
+ */
+const STALE_ERROR_PATTERNS = [
+  /defined multiple times/i,
+  /Duplicate class/i,
+  /DexArchiveMergerException/,
+  /multiple dex files define/i
+];
+
+/** 只清理这些目录即可修掉重复类问题，且比全量 clean 快得多。 */
+const STALE_ARTIFACT_DIRS = [
+  'transforms',
+  'mixed_scope_dex_archive',
+  'project_dex_archive',
+  'sub_project_dex_archive',
+  'external_libs_dex_archive',
+  'external_libs_dex_archive_with_artifact_transforms',
+  'dex',
+  'dex_archive_input_jar_hashes',
+  'dex_number_of_buckets_file'
+];
+
+/** 最近一次 Gradle 输出的末尾片段，用于失败后判断是否为缓存残留。 */
+let gradleLogTail = '';
+
+function looksLikeStaleArtifactError(text) {
+  if (!text) {
+    return false;
+  }
+  return STALE_ERROR_PATTERNS.some((pattern) => pattern.test(text));
+}
+
+function moduleBuildDir() {
+  const root = projectRoot();
+  const module = (cfg().get('module') || 'app').trim().replace(/^:/, '');
+  if (!root || !module) {
+    return null;
+  }
+  return path.join(root, ...module.split(':'), 'build');
+}
+
+/** 递归统计目录体积，只用于清理后给用户一个直观反馈。 */
+function directorySize(dir) {
+  let total = 0;
+  let entries;
+  try {
+    entries = fs.readdirSync(dir, { withFileTypes: true });
+  } catch (e) {
+    return 0;
+  }
+  for (const entry of entries) {
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) {
+      total += directorySize(full);
+    } else if (entry.isFile()) {
+      try {
+        total += fs.statSync(full).size;
+      } catch (e) {
+        /* 文件可能已被其他进程删除 */
+      }
+    }
+  }
+  return total;
+}
+
+function formatBytes(bytes) {
+  if (!bytes) {
+    return '0B';
+  }
+  const units = ['B', 'KB', 'MB', 'GB'];
+  let value = bytes;
+  let index = 0;
+  while (value >= 1024 && index < units.length - 1) {
+    value /= 1024;
+    index += 1;
+  }
+  return `${value.toFixed(index === 0 ? 0 : 1)}${units[index]}`;
+}
+
+/**
+ * 清理构建产物。
+ * @param {string} [scope] stale（默认，只清 transform/dex 缓存）| intermediates | gradle
+ */
+async function cleanBuildOutputs(scope) {
+  const mode = scope || cfg().get('cleanScope') || 'stale';
+  const buildDir = moduleBuildDir();
+  const module = (cfg().get('module') || 'app').trim().replace(/^:/, '');
+  if (!buildDir) {
+    throw new Error('未找到 Gradle 工程根目录或模块名，无法清理。');
+  }
+  if (mode === 'gradle') {
+    const task = `:${module}:clean`;
+    const r = await runGradleProcess([task], null, null);
+    if (!r.ok) {
+      throw new Error(`gradlew ${task} 执行失败，详见输出面板。`);
+    }
+    return { mode, task, removed: [], bytes: 0 };
+  }
+  const targets =
+    mode === 'intermediates'
+      ? [path.join(buildDir, 'intermediates')]
+      : STALE_ARTIFACT_DIRS.map((dir) => path.join(buildDir, 'intermediates', dir));
+  const removed = [];
+  let bytes = 0;
+  for (const target of targets) {
+    if (!fs.existsSync(target)) {
+      continue;
+    }
+    bytes += directorySize(target);
+    fs.rmSync(target, { recursive: true, force: true });
+    removed.push(path.basename(target));
+  }
+  return { mode, removed, bytes };
+}
+
+async function commandCleanBuild() {
+  if (!projectRoot()) {
+    vscode.window.showErrorMessage('当前工作区不是 Gradle 工程（未找到 gradlew）。');
+    return;
+  }
+  return withOperation('cleanBuild', [['clean', '清理'], ['build', '编译']], async (step) => {
+    const cleaned = await step('clean', async () => {
+      const r = await cleanBuildOutputs();
+      const what = r.task || r.removed.join('、') || '无残留';
+      output.appendLine(`🧹 已清理构建缓存：${what}（释放 ${formatBytes(r.bytes)}）`);
+      return true;
+    });
+    if (!cleaned) {
+      return false;
+    }
+    const device = await peekDevice();
+    const ok = await step('build', () => build(device));
+    if (ok) {
+      vscode.window.showInformationMessage('已清理构建缓存并编译成功。');
+    }
+    return ok;
+  });
+}
+
 function runGradleProcess(args, device, token) {
   return new Promise((resolve) => {
     const root = projectRoot();
@@ -1126,6 +1268,7 @@ function runGradleProcess(args, device, token) {
       resolve({ ok: false, reason: 'no-wrapper', cancelled: false });
       return;
     }
+    gradleLogTail = '';
     const env = Object.assign({}, process.env);
     const javaHome = detectJavaHome();
     if (javaHome) {
@@ -1167,6 +1310,8 @@ function runGradleProcess(args, device, token) {
     const onData = (buf) => {
       const text = buf.toString();
       output.append(text);
+      // 保留末尾 200KB，足够匹配失败原因又不至于占内存
+      gradleLogTail = (gradleLogTail + text).slice(-204800);
     };
     proc.stdout.on('data', onData);
     proc.stderr.on('data', onData);
@@ -1196,7 +1341,7 @@ function runGradleProcess(args, device, token) {
       }
       const cancelled = buildCancelled || !!(token && token.isCancellationRequested);
       output.appendLine(`◀ Gradle 退出：code=${code} signal=${signal || '-'}`);
-      resolve({ ok: code === 0 && !cancelled, cancelled });
+      resolve({ ok: code === 0 && !cancelled, cancelled, log: gradleLogTail });
     });
   });
 }
@@ -1260,9 +1405,27 @@ async function build(device) {
         } else if (r.cancelled) {
           vscode.window.showWarningMessage('已取消编译。');
         } else if (!r.ok) {
-          vscode.window
-            .showErrorMessage('编译失败。', '查看输出')
-            .then((choice) => choice === '查看输出' && output.show(true));
+          if (looksLikeStaleArtifactError(r.log)) {
+            output.appendLine('');
+            output.appendLine('💡 重复类/重复定义多数是增量构建缓存残留：AGP 的 Transform 输出目录不会清理旧产物，');
+            output.appendLine('   依赖版本变化后同一个类的两份历史 dex 会一起进入合并。可执行「Android: 清理缓存并重新编译」。');
+            vscode.window
+              .showErrorMessage('编译失败：检测到重复类/重复定义，通常是构建缓存残留。', '清理缓存并重试', '查看输出')
+              .then((choice) => {
+                if (choice === '查看输出') {
+                  output.show(true);
+                } else if (choice === '清理缓存并重试') {
+                  // 等 build() 的收尾（building/operation 复位）走完再起新任务
+                  setTimeout(() => {
+                    commandCleanBuild();
+                  }, 200);
+                }
+              });
+          } else {
+            vscode.window
+              .showErrorMessage('编译失败。', '查看输出')
+              .then((choice) => choice === '查看输出' && output.show(true));
+          }
         }
         return r;
       }
@@ -1775,7 +1938,7 @@ async function commandDoctor() {
 /* ------------------------------------------------------------------ */
 
 async function handleViewAction(type, msg) {
-  const mutations = ['selectDevice', 'startAvd', 'setConfiguration', 'run', 'build', 'install', 'launch', 'stop', 'restart', 'uninstall', 'clearData'];
+  const mutations = ['selectDevice', 'startAvd', 'setConfiguration', 'run', 'build', 'cleanBuild', 'install', 'launch', 'stop', 'restart', 'uninstall', 'clearData'];
   if (mutations.includes(type) && isBusy()) throw new Error('已有任务正在进行，请等待完成。');
   switch (type) {
     case 'ready':
@@ -1810,6 +1973,9 @@ async function handleViewAction(type, msg) {
       break;
     case 'build':
       await commandBuildOnly();
+      break;
+    case 'cleanBuild':
+      await commandCleanBuild();
       break;
     case 'install':
       await commandInstallOnly();
@@ -1992,6 +2158,7 @@ function activate(context) {
     vscode.commands.registerCommand('androidRunner.selectDevice', wrap(commandSelectDevice)),
     vscode.commands.registerCommand('androidRunner.doctor', wrap(commandDoctor)),
     vscode.commands.registerCommand('androidRunner.buildOnly', wrap(commandBuildOnly)),
+    vscode.commands.registerCommand('androidRunner.cleanBuild', wrap(commandCleanBuild)),
     vscode.commands.registerCommand('androidRunner.installOnly', wrap(commandInstallOnly)),
     vscode.commands.registerCommand('androidRunner.launchOnly', wrap(commandLaunchOnly)),
     vscode.commands.registerCommand('androidRunner.logcat', wrap(commandLogcat)),

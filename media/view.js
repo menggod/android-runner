@@ -9,7 +9,7 @@
   let pendingConfiguration = null;
   let earlyRuntime = null;
   const $ = (id) => document.getElementById(id);
-  const pendingLabels = { run: '正在运行…', install: '正在安装…', restart: '正在重启…', build: '正在编译…', startAvd: '正在启动模拟器…' };
+  const pendingLabels = { run: '正在运行…', install: '正在安装…', restart: '正在重启…', build: '正在编译…', cleanBuild: '正在清理并编译…', startAvd: '正在启动模拟器…' };
 
   ['envDetails', 'manageDetails'].forEach((id) => {
     $(id).open = !!saved[id];
@@ -181,7 +181,7 @@
       const running = operation.status === 'running';
       const failed = operation.steps.find((step) => step.status === 'failed' || step.status === 'cancelled');
       const active = operation.steps.find((step) => step.status === 'running');
-      const successTitles = { run: '已安装并启动', build: '编译成功', install: '安装成功', launch: '应用已启动', restart: '应用已重启' };
+      const successTitles = { run: '已安装并启动', build: '编译成功', cleanBuild: '已清理并编译成功', install: '安装成功', launch: '应用已启动', restart: '应用已重启' };
       const title = running ? active ? '正在' + active.label + '…' : '正在准备运行…' : operation.status === 'success' ? successTitles[operation.kind] || '任务完成' : operation.status === 'cancelled' ? (failed ? failed.label : '任务') + '已取消' : (failed ? failed.label : '任务') + '失败';
       const steps = operation.steps.map((step) => '<div class="operation-step ' + esc(step.status) + '">' + icon(step.status === 'success' ? 'check' : step.status === 'failed' ? 'warning' : step.status === 'cancelled' ? 'close' : step.status === 'running' ? 'clock' : 'info') + esc(step.label) + '<small>' + (step.startedAt ? elapsed(step.startedAt, step.endedAt) : '等待') + '</small></div>').join('');
       const detail = operation.detail || (failed && failed.detail) || (active && active.key === 'build' ? state.buildTask : operation.deviceLabel) || (running ? '等待选择设备或任务开始' : 'Gradle 构建');
@@ -295,6 +295,7 @@
     const disabled = {
       runBtn: !project || !hasDevice || busy,
       buildBtn: !project || busy,
+      cleanBtn: !project || busy,
       installBtn: !project || !hasDevice || !state.apk || busy,
       stopBtn: !hasDevice || !hasPackage || busy,
       restartBtn: !hasDevice || !hasPackage || busy,

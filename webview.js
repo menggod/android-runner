@@ -129,6 +129,7 @@ class RunnerViewProvider {
       <div class="section-heading"><h2 id="actionsHeading">常用操作</h2><button class="text-btn" data-action="showOutput" title="打开 Android Runner 输出面板">构建输出 ${icon('log')}</button></div>
       <div class="action-grid">
         <button class="action secondary" id="buildBtn" data-action="build" title="仅编译，不安装到设备" disabled>${icon('build')}<span>编译</span></button>
+        <button class="action secondary" id="cleanBtn" data-action="cleanBuild" title="清掉构建缓存残留后重新编译（修重复类 / 增量缓存问题）" disabled>${icon('clear')}<span>清理重建</span></button>
         <button class="action secondary" id="installBtn" data-action="install" title="安装已有 APK，保留应用数据" disabled>${icon('download')}<span>安装 APK</span></button>
         <button class="action secondary" id="restartBtn" data-action="restart" title="停止后重新启动应用，不重新编译" disabled>${icon('refresh')}<span>重启应用</span></button>
         <button class="action secondary" id="logcatBtn" data-action="logcat" title="打开设备 logcat 日志" disabled>${icon('log')}<span>设备日志</span></button>

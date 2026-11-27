@@ -3,7 +3,7 @@
   "author": "menggod",
   "displayName": "Android Device Runner",
   "description": "在 VSCode 内一键检查设备、自动探测编译环境、编译、安装、启动 Android App 并投屏操作，替代切到 Android Studio 点运行",
-  "version": "1.5.0",
+  "version": "1.6.0",
   "publisher": "notto-work",
   "engines": {
     "vscode": "^1.70.0"
@@ -37,6 +37,11 @@
         "command": "androidRunner.buildOnly",
         "title": "Android: 仅编译",
         "icon": "$(tools)"
+      },
+      {
+        "command": "androidRunner.cleanBuild",
+        "title": "Android: 清理缓存并重新编译",
+        "icon": "$(clear-all)"
       },
       {
         "command": "androidRunner.installOnly",
@@ -114,6 +119,21 @@
           },
           "default": [],
           "markdownDescription": "追加的 Gradle 参数，例如 `-Papi_env=prod`。"
+        },
+        "androidRunner.cleanScope": {
+          "type": "string",
+          "enum": [
+            "stale",
+            "intermediates",
+            "gradle"
+          ],
+          "default": "stale",
+          "enumDescriptions": [
+            "只清 `transforms` 与 `dex` 等增量缓存目录（最快，可修掉重复类 / D8 缓存残留）",
+            "清掉 `<module>/build/intermediates` 整个中间产物目录（更彻底，需重跑资源与编译任务）",
+            "执行 `gradlew :<module>:clean`（最彻底，等同 IDE 的 Clean Project）"
+          ],
+          "markdownDescription": "「清理缓存并重新编译」清理到什么程度。默认 `stale`：AGP 的 Transform 输出目录只追加不清理，依赖版本变化后同一类的两份历史产物会一起进入 dex 合并，导致 `defined multiple times`；只清这些缓存即可修复，且比全量 clean 快得多。"
         },
         "androidRunner.apkPath": {
           "type": "string",

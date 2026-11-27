@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.6.0
+
+- 新增「清理重建」：面板按钮 + 命令「Android: 清理缓存并重新编译」，先清理构建缓存残留再编译，不需要离开 VSCode
+- 编译失败自动识别增量缓存问题：Gradle 输出命中 `defined multiple times`、`Duplicate class`、`DexArchiveMergerException` 等特征时，失败提示直接给出「清理缓存并重试」，输出面板同时说明原因
+- 新增设置 `androidRunner.cleanScope`：`stale`（默认，只清 `transforms`/`dex` 等缓存，最快）/ `intermediates`（清整个中间产物目录）/ `gradle`（`gradlew :<module>:clean`）
+- 清理后会打印实际删掉的目录与释放空间，便于判断是否命中问题
+
 ## 1.5.0
 
 - 新增内嵌投屏（实验）：画面显示在 VSCode 面板里，用鼠标键盘操作（点击、滑动、滚轮、常用按键）。默认不启用，通过命令「Android: 投屏（内嵌面板 · 实验）」触发
